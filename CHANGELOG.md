@@ -1,5 +1,181 @@
 # MMPEA 记忆管理 更新日志
 
+## v5.5.1 (2026-02-19)
+
+### UI/UX 改进
+
+#### 面板遮罩与移动端适配
+- 面板弹出时增加半透明暗色遮罩 + 毛玻璃模糊（`backdrop-filter: blur(4px)`），点击遮罩关闭面板
+- 移动端（屏幕宽度 <500px）面板自动居中显示，宽度为屏幕宽 -24px，高度最大 480px
+
+#### 初始化弹窗重做
+- 原 `prompt()` 文本输入替换为自定义 HTML 弹窗
+- 起始/结束改为两个独立 `type="number"` 输入框，预填 0 和 chatLen-1
+- 消除手动输入格式导致的解析失败风险
+
+#### 记忆体检增强：孤儿页面管理
+- 健康检查不再只显示孤立日期数量，改为展示受影响的故事页列表
+- 每个故事页标注状态标签：**全孤立**（红色，所有源日期均已失效）/ **部分孤立**（琥珀色，部分源日期失效）
+- 支持复选框选择 + 全选按钮
+- **删除选中页面**：从 `data.pages` 中移除选中页面及其 Embedding 向量
+- **清理孤立日期**：从 `extractedMsgDates` 中移除已不存在的消息日期记录
+- 操作完成后自动重新运行体检刷新结果
+
+#### 未提取标记图标修正
+- 替换手绘 inline SVG，改用扩展目录中实际的 `robot-svgrepo-com.svg` 路径数据
+- SVG `fill` 改为 `currentColor`，跟随 CSS 颜色控制
+
+#### 设置面板 UI 修复（模块拆分后回归修复）
+- 知识卡片（已知角色/NPC/物品）布局与样式还原
+- 故事页编辑表单：隐藏预览区、恢复日期字段
+- 标签样式：分类标签（catTags）彩色药丸、关键词标签（kwTags）灰色药丸
+- 故事页卡片布局对齐原始设计稿
+- 实时指令聊天区域高度自适应
+
+#### 移动端悬浮球修复
+- 重新挂载 Popover API（`popover="manual"`）确保 top layer 渲染
+- 修复触屏拖拽事件（touchstart/touchmove/touchend）
+- Lottie 动画加载失败时降级为静态图标
+- 拖拽位置边界约束（不超出视口）
+
+### Bug Fixes
+
+#### 删楼后自动隐藏范围未更新
+- **问题**: 用户删除消息后，`keepRecentMessages` 对应的可见消息范围未重新计算，导致本应可见的消息仍处于隐藏状态（例如删了 6 楼后第 60 楼还是隐藏的）
+- **修复**: 新增 `recalculateHideRange()` 函数，在 `onMessageDeleted` 事件中自动比较新旧隐藏边界，若新边界更小则调用 `hideChatMessageRange(unhideFrom, oldBoundary, true)` 取消隐藏差额区间
+
+---
+
+## v5.5.0 (2026-02-18)
+
+### 架构重构：模块化拆分
+
+将原 ~6000 行单体 `index.js` 拆分为 15 个职责单一的 ES 模块，依赖关系为有向无环图（DAG），无循环依赖。
+
+#### 模块清单
+
+| 模块 | 职责 |
+|------|------|
+| `src/constants.js` | 纯常量（零依赖） |
+| `src/utils.js` | 工具函数（escapeHtml、generateId、cosineSimilarity 等） |
+| `src/mood.js` | Lottie 动画心情系统 |
+| `src/data.js` | 数据层：设置、记忆 CRUD、迁移链 |
+| `src/auth.js` | 授权验证（SHA-256 授权码校验） |
+| `src/api.js` | LLM API 层（主/副 API、工具调用） |
+| `src/save.js` | 存档系统（saveToSlot / loadFromSlot） |
+| `src/embedding.js` | Embedding 向量检索系统 |
+| `src/formatting.js` | 提示词构建与记忆格式化 |
+| `src/compression.js` | 渐进式压缩引擎 |
+| `src/extraction.js` | 记忆提取引擎（UI 回调注入模式） |
+| `src/retrieval.js` | Agent 检索引擎（MemGPT 工具调用） |
+| `src/ui-browser.js` | 设置面板 UI（updateBrowserUI、CRUD 操作） |
+| `src/ui-fab.js` | 悬浮球、召回面板、工具箱、批量初始化 |
+| `src/commands.js` | /mm-* 斜杠命令注册 |
+
+`index.js` 精简为薄入口：jQuery 初始化、auth 门控、事件绑定、回调注入。
+
+#### 关键架构决策
+
+- **回调注入模式**：`setExtractionUI(callbacks)` 将 `updateBrowserUI` / `updateInitProgressUI` 等 UI 函数注入提取引擎，避免 extraction → ui-browser/ui-fab 的循环依赖
+- **状态 getter 模式**：retrieval 模块通过 `getLastRecalledPages()` / `getLastNarrative()` 等 getter 暴露状态，不直接共享变量
+- **UI 职责分离**：`safeCompress()` / `retrieveMemories()` 不再自行调用 `updateBrowserUI()`，由调用方决定 UI 刷新时机
+- **全局拦截器包装**：`window['memoryManager_retrieveMemories']` 在 index.js 封装 `retrieveMemories` + `updateRecallFab`，保持检索后 FAB 自动更新
+
+---
+
+## v5.4.1 (2026-02-18)
+
+### Performance Optimizations
+
+#### escapeHtml 纯字符串替换
+- 原实现每次调用创建一个 `document.createElement('div')` DOM 节点，在 UI 渲染时（每张卡片调用 5-8 次 escapeHtml）开销显著
+- 改为纯字符串 `.replace()` 链，零 DOM 操作，性能提升约 10 倍
+
+#### updateBrowserUI 分区更新
+- 原实现每次调用都重建**全部** 9 个 UI 区域（timeline / knownChars / npcChars / items / pageStats / pageList / embedding / status / slots），包括完整的 innerHTML 重写和事件监听重绑
+- 新增 `sections` 参数，支持按需只更新特定区域
+- 编辑/删除/新增单个实体（角色/NPC/物品/故事页/时间线）时，只更新对应的 1-2 个区域，避免全量 DOM 重建
+- 无参调用保持向后兼容（更新全部区域）
+- 内部拆分为 `_renderKnownChars()`、`_renderNpcChars()`、`_renderItems()`、`_renderPageList()` 四个独立渲染函数
+
+#### updateUnextractedBadges 定向更新
+- 原实现每次调用都 `querySelectorAll('.mes[mesid]')` 全量扫描所有聊天消息 DOM 节点
+- 新增 `targetMesId` 参数，`onMessageRendered` 时只处理单条消息的 badge，避免 O(n) 全量扫描
+- 全量扫描仅在 `onChatChanged` 等真正需要时执行
+
+#### data.pages 排序优化
+- `data.pages.sort()` 改为 `[...data.pages].sort()` 避免原地变异，防止其他代码依赖的数组顺序被意外修改
+- 排序比较器内的 `parseInt(day.replace(/\D/g, ''))` 改为 Map 缓存，每个 page 只解析一次
+
+#### FAB 拖拽监听器按需绑定
+- 原实现在 FAB 创建时就将 `mousemove` / `mouseup` / `touchmove` / `touchend` 四个监听器永久挂载到 `document`，每次鼠标移动都会触发回调（即使未拖拽）
+- 改为在 `mousedown` / `touchstart` 时才绑定 move/end 监听，拖拽结束后立即 `removeEventListener`，非拖拽状态下零开销
+
+---
+
+## v5.4.0 (2026-02-18)
+
+### New Features
+
+#### 小电视面板 Tab 化
+- 原单一"召回"面板拆分为三个 Tab：**召回 / 管理指令 / 工具箱**
+- Tab 懒加载（首次切入才渲染内容）
+- 关闭面板或离开工具箱 Tab 时自动清空实时指令上下文（节省 API 消耗）
+
+#### 管理指令 Tab（新功能）
+- 支持按环节填写用户指令：**全局 / 提取 / 召回 / 压缩**
+- 各环节带有极简说明（写给完全不懂的人看的那种）
+- "直接保存"与"让管理员整理"（LLM重新格式化分配到各字段）两种保存方式
+- 指令自动注入到对应 prompt 函数末尾（5个提示词函数全覆盖）
+- 数据存储在 `managerDirective` 字段，绑定到当前存档
+
+#### 故事页完整编辑表单（新功能）
+- 点击"编辑"展开完整内联表单，可编辑所有字段：标题、天数（D1）、日期（251017）、内容、关键词（逗号分隔）、分类标签（多选）、重要程度
+- 原来只能编辑 content 文本框，现在全字段可改
+- 保存后如启用了 Embedding 自动重新建向量
+
+#### 手动新增故事页（新功能）
+- 故事页列表底部增加"+ 新增故事页"按钮
+- 点击后创建空白页并自动打开编辑表单
+
+#### 工具箱 Tab（新功能）
+
+**记忆体检**
+- 比对 `extractedMsgDates` 与当前聊天记录，找出孤立（已删消息）的提取日期
+- 显示受影响的故事页及其状态（全孤立=建议删除，部分孤立=建议审查）
+- 支持选择性删除 + 清理孤立日期记录
+
+**快捷操作**
+- 提取指定范围（输入起止编号 → 调用完整提取 pipeline）
+- 标记已提取（只打标不提取，用于跳过不需要记忆的消息段）
+- 重建向量库（快捷入口，复用设置面板的同名功能）
+
+**实时指令**（聊天式 agent）
+- 和记忆管理员用自然语言对话，直接操作记忆数据
+- 支持 7 个工具：搜索故事页、编辑字段、删除页面、提取范围、标记已提取、压缩页面、重建向量
+- 最多 10 轮 tool calling，末轮禁用工具强制返回文字总结
+- 离开 Tab 或关闭面板自动清空上下文
+
+#### 删楼提醒 Toast（新功能）
+- 用户删除消息后自动检测是否有孤立提取记录
+- 发现孤立数据时弹出 toast，引导使用工具箱→记忆体检进行清理
+
+### Bug Fixes
+- **实时指令 tool call 崩溃**: `callSecondaryApiChat` 返回的 `toolCalls` 已解析为 `{name, arguments}`，但代码按原始 OpenAI 格式 `tc.function.name` 访问导致崩溃。修复：改用 `rawToolCalls` 迭代，保留 `tc.id` 和原始格式
+- **副 API 不可用无反馈**: `agentRetrieve` 调用失败时只打日志，召回静默失败。修复：加 try-catch，失败时弹出红色 toast，显示错误信息并提示检查 API 状态，自动 fallback 到关键词检索
+
+---
+
+## v5.3.1 (2026-02-18)
+
+### Bug Fixes
+- **时间线被新提取覆盖**: `data.timeline = result.timeline` 直接替换，LLM 只输出本批内容的时间线时旧数据全部丢失。修复：新增 `mergeTimelines()` 函数，解析 D-条目范围，智能判断新旧时间线的覆盖程度，只覆盖已被新时间线包含的旧条目
+- **强制提取覆盖存档**: 强制提取后 `autoSaveIfEnabled()` 自动保存，导致当前记忆数据（可能为空）直接覆盖已有存档。修复：强制提取前自动备份到 `{存档名}-备份`，如果当前记忆为空且存档存在则自动加载，确保不丢数据
+- **故事页缺少 sourceDates**: 正常提取和强制提取创建的故事页 `sourceDates` 始终为空，无法追踪来源消息。修复：`applyExtractionResult` 新增 `sourceDates` 参数，全部 6 个调用点均传入对应批次的 `send_date` 列表
+- **处理计数显示错误**: 存在 `extractedMsgDates` 标记时只用日期计数，忽略水位线；无标记时只用水位线。导致新旧混合数据下计数严重偏低（如"已处理4条"而实际已处理上千条）。修复：取日期计数和水位线计数的较大值
+
+---
+
 ## v5.3.0 (2026-02-17)
 
 ### New Features
