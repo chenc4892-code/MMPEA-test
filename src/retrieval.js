@@ -272,7 +272,7 @@ export function buildAgentPrompt(data, recentText, candidatePages, maxPages) {
 - 聚焦当前需要，不面面俱到
 - 不要将## 当前对话中已有的剧情和内容写进叙事里，那些还没有形成长期记忆
 - 不要预测接下来的故事发展
-
+- 基于已有内容，不要胡编乱造
 来源: pg_xx · pg_yy · pg_zz
 [/记忆闪回]
 
@@ -370,13 +370,33 @@ export async function agentRetrieve(data, recentText, candidatePages, maxPages) 
             return { narrative: '', sourcePageIds: [], skipped: true };
         }
 
-        // Extract source page IDs from [来源: pg_xx, pg_yy]
+        // Extract source page IDs from various formats:
+        //   [来源: pg_xx · pg_yy]  or  来源: pg_xx · pg_yy · pg_zz
         const sourcePageIds = [];
-        const sourceMatch = narrative.match(/\[来源[:\uff1a]\s*([^\]]+)\]/);
+        let sourceMatch = narrative.match(/\[来源[:\uff1a]\s*([^\]]+)\]/);
         if (sourceMatch) {
-            const ids = sourceMatch[1].split(/[,，\s]+/).filter(s => s.startsWith('pg_'));
-            sourcePageIds.push(...ids);
             narrative = narrative.replace(/\n?\[来源[:\uff1a][^\]]*\]\s*$/, '').trim();
+        } else {
+            sourceMatch = narrative.match(/来源[:\uff1a]\s*((?:pg_\S+[\s·,，]*)+)/);
+            if (sourceMatch) {
+                narrative = narrative.replace(/\n?来源[:\uff1a]\s*(?:pg_\S+[\s·,，]*)+\s*$/, '').trim();
+            }
+        }
+        if (sourceMatch) {
+            const ids = sourceMatch[1].split(/[,，·\s]+/).filter(s => s.startsWith('pg_'));
+            sourcePageIds.push(...ids);
+        }
+
+        // Strip [记忆闪回]/[/记忆闪回] wrapper tags if LLM included them
+        narrative = narrative.replace(/^\[记忆闪回\]\s*/, '').replace(/\s*\[\/记忆闪回\]\s*$/, '').trim();
+
+        // Replace pg_xx IDs with readable page titles
+        if (sourcePageIds.length > 0) {
+            const readableSources = sourcePageIds.map(id => {
+                const page = data.pages.find(p => p.id === id);
+                return page ? `${page.day}「${page.title}」` : id;
+            });
+            narrative += `\n来源: ${readableSources.join(' · ')}`;
         }
 
         log('Agent narrative:', narrative.length, 'chars, sources:', sourcePageIds);
