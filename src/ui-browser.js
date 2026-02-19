@@ -128,11 +128,23 @@ export function updateBrowserUI(sections) {
 export function updateStatusDisplay() {
     const data = getMemoryData();
     const ctx = getContext();
-    const chatLen = ctx.chat ? ctx.chat.length : 0;
-
     const dates = data.processing.extractedMsgDates || {};
-    const extractedCount = Object.keys(dates).length;
-    const pendingCount = Math.max(0, chatLen - extractedCount);
+
+    // Count by scanning actual chat messages — avoid inflating pending
+    // with messages that share a send_date key or have no trackable date.
+    // is_system (auto-hidden) messages still have send_date and must be included.
+    let extractedCount = 0;
+    let pendingCount = 0;
+    if (ctx.chat) {
+        for (const msg of ctx.chat) {
+            if (!msg || !msg.send_date) continue; // no trackable key → skip
+            if (dates[msg.send_date]) {
+                extractedCount++;
+            } else {
+                pendingCount++;
+            }
+        }
+    }
 
     if (data.processing.extractionInProgress) {
         $('#mm_status_text').text('提取中...');

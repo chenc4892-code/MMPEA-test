@@ -112,8 +112,9 @@ export function bindRecallFab() {
     function hidePanel() {
         const el = document.getElementById('mm_recall_panel');
         const backdrop = document.getElementById('mm_panel_backdrop');
-        if (!el) return;
+        // Always clean up the backdrop first, even if panel element is missing
         if (backdrop) backdrop.classList.remove('mm-panel-backdrop-visible');
+        if (!el) return;
         if (hasPopover) {
             try { el.hidePopover(); } catch (_) { /* already hidden */ }
         }
@@ -122,7 +123,9 @@ export function bindRecallFab() {
 
     function isPanelVisible() {
         const el = document.getElementById('mm_recall_panel');
-        return el && el.style.display !== 'none' && el.offsetParent !== null;
+        if (!el) return false;
+        // offsetParent is null for elements in the Popover API top-layer, so use inline style instead
+        return el.style.getPropertyValue('display') === 'flex';
     }
 
     // Tab switching
@@ -445,6 +448,9 @@ export function renderToolboxTab() {
                 <div class="mm-toolbox-row">
                     <button class="mm-toolbox-btn mm-rebuild-vectors-btn">重建向量库</button>
                 </div>
+                <div class="mm-toolbox-row">
+                    <button class="mm-toolbox-btn mm-sync-watermark-btn">同步待处理计数</button>
+                </div>
             </div>
 
             <div class="mm-toolbox-section">
@@ -550,6 +556,35 @@ export function renderToolboxTab() {
         } else {
             toastr?.warning?.('请先在设置面板中配置向量相关参数');
         }
+    });
+
+    // Sync watermark to extractedMsgDates
+    container.find('.mm-sync-watermark-btn').on('click', () => {
+        const data = getMemoryData();
+        const ctx = getContext();
+        const extracted = data.processing.extractedMsgDates || {};
+        const chat = ctx.chat || [];
+
+        // Find the highest chat index whose send_date is marked as extracted
+        let highestIdx = -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            const msg = chat[i];
+            if (msg?.send_date && extracted[msg.send_date]) {
+                highestIdx = i;
+                break;
+            }
+        }
+
+        const oldWatermark = data.processing.lastExtractedMessageId ?? -1;
+        if (highestIdx <= oldWatermark) {
+            toastr?.info?.(`水位线已是最新（${oldWatermark}），无需同步`, 'Memory Manager');
+            return;
+        }
+
+        data.processing.lastExtractedMessageId = highestIdx;
+        saveMemoryData();
+        updateBrowserUI(['status']);
+        toastr?.success?.(`水位线已同步：${oldWatermark} → ${highestIdx}`, 'Memory Manager');
     });
 
     // Real-time command

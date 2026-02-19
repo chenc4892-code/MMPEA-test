@@ -341,9 +341,16 @@ export async function safeExtract(force = false) {
 
     const data = getMemoryData();
     if (data.processing.extractionInProgress) {
-        log('Extraction already in progress, skipping');
-        if (force) toastr?.warning?.('提取正在进行中，请等待完成', 'Memory Manager');
-        return;
+        if (force) {
+            // Force extraction overrides any stale lock (can't be running after a page reload)
+            warn('Force extract: clearing stale extractionInProgress lock');
+            data.processing.extractionInProgress = false;
+            saveMemoryData();
+            toastr?.info?.('检测到提取锁未释放，已自动重置，开始强制提取...', 'Memory Manager', { timeOut: 4000 });
+        } else {
+            log('Extraction already in progress, skipping');
+            return;
+        }
     }
 
     const ctx = getContext();
@@ -447,7 +454,13 @@ export async function forceExtractUnprocessed(data, ctx, s) {
     }
 
     if (unextracted.length === 0) {
+        // All messages are already marked — sync the watermark to avoid phantom pending count
+        if (endIdx - 1 > data.processing.lastExtractedMessageId) {
+            data.processing.lastExtractedMessageId = endIdx - 1;
+            saveMemoryData();
+        }
         toastr?.info?.('所有消息均已提取，没有需要处理的内容', 'Memory Manager');
+        _ui.updateStatusDisplay?.();
         return;
     }
 
@@ -475,7 +488,7 @@ export async function forceExtractUnprocessed(data, ctx, s) {
             const batchText = batch.map(item => `${item.msg.name}: ${item.msg.mes}`).join('\n\n');
             const batchLastIdx = batch[batch.length - 1].idx;
 
-            _ui.updateInitProgressUI?.(bi, totalBatches, `正在提取第 ${bi + 1}/${totalBatches} 批...`);
+            _ui.updateInitProgressUI?.(bi, totalBatches, `正在等待第 ${bi + 1}/${totalBatches} 批 API 响应...`);
 
             try {
                 const prompt = buildExtractionPrompt(data, batchText);
@@ -489,6 +502,7 @@ export async function forceExtractUnprocessed(data, ctx, s) {
                 if (!result) {
                     warn(`Force batch ${bi + 1}: Failed to parse response`);
                     forceFailedBatches.push({ index: bi, batch, reason: '解析失败' });
+                    _ui.updateInitProgressUI?.(bi + 1, totalBatches, `第 ${bi + 1}/${totalBatches} 批解析失败，待重试`);
                     continue;
                 }
 
@@ -503,9 +517,11 @@ export async function forceExtractUnprocessed(data, ctx, s) {
                 saveMemoryData();
                 successCount++;
                 log(`Force batch ${bi + 1}/${totalBatches} done. Pages: ${data.pages.length}`);
+                _ui.updateInitProgressUI?.(bi + 1, totalBatches, `第 ${bi + 1}/${totalBatches} 批完成，已有 ${data.pages.length} 个故事页`);
             } catch (err) {
                 warn(`Force batch ${bi + 1} failed:`, err);
                 forceFailedBatches.push({ index: bi, batch, reason: err.message });
+                _ui.updateInitProgressUI?.(bi + 1, totalBatches, `第 ${bi + 1}/${totalBatches} 批失败: ${err.message.substring(0, 40)}`);
             }
         }
 
@@ -520,7 +536,7 @@ export async function forceExtractUnprocessed(data, ctx, s) {
                 const batchText = batch.map(item => `${item.msg.name}: ${item.msg.mes}`).join('\n\n');
                 const batchLastIdx = batch[batch.length - 1].idx;
 
-                _ui.updateInitProgressUI?.(ri, retryList.length, `重试第 ${ri + 1}/${retryList.length} 批...`);
+                _ui.updateInitProgressUI?.(ri, retryList.length, `重试第 ${ri + 1}/${retryList.length} 批，等待API响应...`);
 
                 try {
                     const prompt = buildExtractionPrompt(data, batchText);
@@ -533,6 +549,7 @@ export async function forceExtractUnprocessed(data, ctx, s) {
                     const result = parseJsonResponse(response);
                     if (!result) {
                         forceFailedBatches.push({ index: retryList[ri].index, batch, reason: '重试解析失败' });
+                        _ui.updateInitProgressUI?.(ri + 1, retryList.length, `重试第 ${ri + 1}/${retryList.length} 批解析仍失败`);
                         continue;
                     }
 
@@ -545,9 +562,11 @@ export async function forceExtractUnprocessed(data, ctx, s) {
 
                     saveMemoryData();
                     successCount++;
+                    _ui.updateInitProgressUI?.(ri + 1, retryList.length, `重试第 ${ri + 1}/${retryList.length} 批成功`);
                 } catch (err) {
                     warn(`Force retry batch failed:`, err);
                     forceFailedBatches.push({ index: retryList[ri].index, batch, reason: err.message });
+                    _ui.updateInitProgressUI?.(ri + 1, retryList.length, `重试第 ${ri + 1}/${retryList.length} 批失败`);
                 }
             }
         }

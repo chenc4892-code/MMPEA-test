@@ -25,6 +25,17 @@
       <!-- Main Content (hidden until authorized) -->
       <div id="mm_main_content" style="display:none">
 
+        <!-- Settings Lock Bar -->
+        <div id="mm_lock_bar" class="mm-lock-bar">
+          <button id="mm_settings_lock_btn" class="mm-lock-btn" title="防误触锁">
+            <i class="fa-solid fa-lock-open"></i>
+            <span id="mm_lock_label">防误触</span>
+          </button>
+        </div>
+
+        <!-- All settings below are disabled when locked -->
+        <div id="mm_settings_body" class="mm-settings-body">
+
         <!-- Basic Controls -->
         <div class="mm-section">
           <label class="checkbox_label" for="mm_enabled">
@@ -311,7 +322,9 @@
           <div>待处理消息: <span id="mm_pending_count">0</span></div>
         </div>
 
-        <div class="mm-version">MMPEAv5.5.4瓜瓜@gua.guagua.uk</div>
+        <div class="mm-version">MMPEAv5.5.6瓜瓜@gua.guagua.uk</div>
+
+        </div><!-- /mm_settings_body -->
 
       </div><!-- /mm_main_content -->
 

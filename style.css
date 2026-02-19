@@ -1122,6 +1122,60 @@
     margin-bottom: 14px;
 }
 
+/* ── Settings Lock Bar ── */
+
+.mm-lock-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    justify-content: flex-end;
+    padding: 4px 0 6px 0;
+    background: var(--SmartThemeBlurTintColor, rgba(20,20,20,0.85));
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    margin-bottom: 4px;
+}
+
+.mm-lock-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.15));
+    background: transparent;
+    color: var(--SmartThemeBodyColor, #aaa);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.mm-lock-btn:hover {
+    opacity: 1;
+    background: var(--SmartThemeQuoteColor, rgba(255,255,255,0.08));
+}
+
+/* Locked state */
+#mm_main_content.mm-settings-locked .mm-lock-btn {
+    opacity: 1;
+    color: #f59e0b;
+    border-color: #f59e0b55;
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.mm-settings-body {
+    transition: opacity 0.2s;
+}
+
+#mm_main_content.mm-settings-locked .mm-settings-body {
+    pointer-events: none;
+    opacity: 0.45;
+    user-select: none;
+}
+
+
 .mm-init-dialog-actions {
     display: flex;
     gap: 8px;

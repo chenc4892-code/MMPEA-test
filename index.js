@@ -217,6 +217,30 @@ function bindSettingsPanel() {
     $('#mm_add_npc_char').on('click', onAddNpcChar);
     $('#mm_add_item').on('click', onAddItem);
     $('#mm_add_page').on('click', onAddPage);
+
+    // Settings lock (防误触)
+    const LOCK_KEY = 'mm_settings_locked';
+    function applyLockState(locked) {
+        const $content = $('#mm_main_content');
+        const $icon = $('#mm_settings_lock_btn i');
+        const $label = $('#mm_lock_label');
+        if (locked) {
+            $content.addClass('mm-settings-locked');
+            $icon.removeClass('fa-lock-open').addClass('fa-lock');
+            $label.text('已锁定');
+        } else {
+            $content.removeClass('mm-settings-locked');
+            $icon.removeClass('fa-lock').addClass('fa-lock-open');
+            $label.text('防误触');
+        }
+    }
+    const initialLocked = localStorage.getItem(LOCK_KEY) === 'true';
+    applyLockState(initialLocked);
+    $('#mm_settings_lock_btn').on('click', function () {
+        const nowLocked = !$('#mm_main_content').hasClass('mm-settings-locked');
+        localStorage.setItem(LOCK_KEY, nowLocked);
+        applyLockState(nowLocked);
+    });
 }
 
 // ── Event Handlers ──
@@ -265,7 +289,10 @@ function onChatChanged() {
     resetConsecutiveFailures();
 
     const data = getMemoryData();
-    data.processing.extractionInProgress = false;
+    if (data.processing.extractionInProgress) {
+        data.processing.extractionInProgress = false;
+        saveMemoryData(); // Persist the reset — prevents stale lock from surviving page reloads on the same chat
+    }
 
     // Cross-chat save loading
     const charName = getCurrentCharName();

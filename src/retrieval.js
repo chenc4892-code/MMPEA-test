@@ -260,7 +260,7 @@ export function buildAgentPrompt(data, recentText, candidatePages, maxPages) {
 [记忆闪回]
 
 （字数在200-500之间，不多于500字的连贯叙事）
-- 时间线、故事页等中的D1，在写叙事时，不要写成D1，写成第一天/初识时等等，以此类推
+- 时间线、故事页等中的D1D2等标识，在写叙事时不要写成D1，写成第一天/初识时等等，以此类推
 - 写清事件之间的因果和情感脉络
 - 保留对当前对话重要的具体细节
 - 聚焦当前需要，不面面俱到
@@ -295,111 +295,109 @@ ${recentText}
 // ── Agent Retrieve ──
 
 export async function agentRetrieve(data, recentText, candidatePages, maxPages) {
-  try {
-    if (data.pages.length === 0) {
-      return { narrative: '', sourcePageIds: [], skipped: true };
-    }
-
-    const tools = buildAgentTools(data);
-    const prompt = buildAgentPrompt(data, recentText, candidatePages, maxPages);
-    const messages = [{ role: 'user', content: prompt }];
-    const maxRounds = 3;
-    let narrative = '';
-
-    log('MemGPT Agent: starting');
-
-    for (let round = 0; round < maxRounds; round++) {
-      log(`Agent round ${round + 1}/${maxRounds}`);
-      let response;
-      try {
-        response = await callSecondaryApiChat(messages, tools, 800);
-      } catch (err) {
-        warn(`Agent round ${round + 1} failed:`, err);
-        break;
-      }
-
-      // No tool calls → text is the final narrative or SKIP
-      if (response.toolCalls.length === 0) {
-        narrative = (response.content || '').trim();
-        log('Agent finished:', narrative.substring(0, 150));
-        break;
-      }
-
-      // Process tool calls — sanitize empty content (API rejects empty string)
-      const assistantMsg = { ...response.rawMessage };
-      if (!assistantMsg.content) delete assistantMsg.content;
-      messages.push(assistantMsg);
-
-      for (const rawTc of response.rawToolCalls) {
-        const name = rawTc.function?.name || '';
-        let args;
-        try {
-          args = typeof rawTc.function?.arguments === 'string'
-            ? JSON.parse(rawTc.function.arguments)
-            : rawTc.function?.arguments || {};
-        } catch (e) { args = {}; }
-
-        const result = executeAgentTool(name, args, data);
-        messages.push({ role: 'tool', tool_call_id: rawTc.id, content: result });
-        log(`  [Round ${round + 1}] ${name}(${JSON.stringify(args).substring(0, 60)}) → ${result.substring(0, 100)}`);
-      }
-
-      // Last round: force text output (no tools)
-      if (round === maxRounds - 1) {
-        try {
-          const finalResp = await callSecondaryApiChat(messages, [], 800);
-          narrative = (finalResp.content || '').trim();
-          log('Agent forced narrative:', narrative.substring(0, 150));
-        } catch (err) {
-          warn('Agent final round failed:', err);
-        }
-      }
-    }
-
-    // Strip <think>...</think> reasoning blocks (e.g. DeepSeek)
-    narrative = narrative.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-    // SKIP check
-    if (!narrative || narrative.toUpperCase() === 'SKIP') {
-      log('Agent: SKIP');
-      return { narrative: '', sourcePageIds: [], skipped: true };
-    }
-
-    // Extract source page IDs from various formats:
-    //   [来源: pg_xx · pg_yy]  or  来源: pg_xx · pg_yy · pg_zz
-    const sourcePageIds = [];
-    let sourceMatch = narrative.match(/\[来源[:\uff1a]\s*([^\]]+)\]/);
-    if (sourceMatch) {
-      narrative = narrative.replace(/\n?\[来源[:\uff1a][^\]]*\]\s*$/, '').trim();
-    } else {
-      sourceMatch = narrative.match(/来源[:\uff1a]\s*((?:pg_\S+[\s·,，]*)+)/);
-      if (sourceMatch) {
-        narrative = narrative.replace(/\n?来源[:\uff1a]\s*(?:pg_\S+[\s·,，]*)+\s*$/, '').trim();
-      }
-    }
-    if (sourceMatch) {
-      const ids = sourceMatch[1].split(/[,，·\s]+/).filter(s => s.startsWith('pg_'));
-      sourcePageIds.push(...ids);
-    }
-
-    // Strip [记忆闪回]/[/记忆闪回] wrapper tags if LLM included them
-    narrative = narrative.replace(/^\[记忆闪回\]\s*/, '').replace(/\s*\[\/记忆闪回\]\s*$/, '').trim();
-
-    // Replace pg_xx IDs with readable page titles
-    if (sourcePageIds.length > 0) {
-      const readableSources = sourcePageIds.map(id => {
-        const page = data.pages.find(p => p.id === id);
-        return page ? `${page.day}「${page.title}」` : id;
-      });
-      narrative += `\n来源: ${readableSources.join(' · ')}`;
-    }
-
-    log('Agent narrative:', narrative.length, 'chars, sources:', sourcePageIds);
-    return { narrative, sourcePageIds, skipped: false };
-  } catch (err) {
-    warn('Agent retrieval failed:', err);
-    return { narrative: '', sourcePageIds: [], skipped: false };
+  if (data.pages.length === 0) {
+    return { narrative: '', sourcePageIds: [], error: false };
   }
+
+  const tools = buildAgentTools(data);
+  const prompt = buildAgentPrompt(data, recentText, candidatePages, maxPages);
+  const messages = [{ role: 'user', content: prompt }];
+  const maxRounds = 3;
+  let narrative = '';
+  let apiFailed = false;
+
+  log('MemGPT Agent: starting');
+
+  for (let round = 0; round < maxRounds; round++) {
+    log(`Agent round ${round + 1}/${maxRounds}`);
+    let response;
+    try {
+      response = await callSecondaryApiChat(messages, tools, 800);
+    } catch (err) {
+      warn(`Agent round ${round + 1} failed:`, err);
+      apiFailed = true;
+      break;
+    }
+
+    // No tool calls → text is the final narrative
+    if (response.toolCalls.length === 0) {
+      narrative = (response.content || '').trim();
+      log('Agent finished:', narrative.substring(0, 150));
+      break;
+    }
+
+    // Process tool calls — sanitize empty content (API rejects empty string)
+    const assistantMsg = { ...response.rawMessage };
+    if (!assistantMsg.content) delete assistantMsg.content;
+    messages.push(assistantMsg);
+
+    for (const rawTc of response.rawToolCalls) {
+      const name = rawTc.function?.name || '';
+      let args;
+      try {
+        args = typeof rawTc.function?.arguments === 'string'
+          ? JSON.parse(rawTc.function.arguments)
+          : rawTc.function?.arguments || {};
+      } catch (e) { args = {}; }
+
+      const result = executeAgentTool(name, args, data);
+      messages.push({ role: 'tool', tool_call_id: rawTc.id, content: result });
+      log(`  [Round ${round + 1}] ${name}(${JSON.stringify(args).substring(0, 60)}) → ${result.substring(0, 100)}`);
+    }
+
+    // Last round: force text output (no tools)
+    if (round === maxRounds - 1) {
+      try {
+        const finalResp = await callSecondaryApiChat(messages, [], 800);
+        narrative = (finalResp.content || '').trim();
+        log('Agent forced narrative:', narrative.substring(0, 150));
+      } catch (err) {
+        warn('Agent final round failed:', err);
+        apiFailed = true;
+      }
+    }
+  }
+
+  // Strip <think>...</think> reasoning blocks (e.g. DeepSeek)
+  narrative = narrative.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+  // Empty or failed → return with error flag
+  if (!narrative) {
+    log(apiFailed ? 'Agent: API call failed' : 'Agent: empty response');
+    return { narrative: '', sourcePageIds: [], error: true };
+  }
+
+  // Extract source page IDs from various formats:
+  //   [来源: pg_xx · pg_yy]  or  来源: pg_xx · pg_yy · pg_zz
+  const sourcePageIds = [];
+  let sourceMatch = narrative.match(/\[来源[:\uff1a]\s*([^\]]+)\]/);
+  if (sourceMatch) {
+    narrative = narrative.replace(/\n?\[来源[:\uff1a][^\]]*\]\s*$/, '').trim();
+  } else {
+    sourceMatch = narrative.match(/来源[:\uff1a]\s*((?:pg_\S+[\s·,，]*)+)/);
+    if (sourceMatch) {
+      narrative = narrative.replace(/\n?来源[:\uff1a]\s*(?:pg_\S+[\s·,，]*)+\s*$/, '').trim();
+    }
+  }
+  if (sourceMatch) {
+    const ids = sourceMatch[1].split(/[,，·\s]+/).filter(s => s.startsWith('pg_'));
+    sourcePageIds.push(...ids);
+  }
+
+  // Strip [记忆闪回]/[/记忆闪回] wrapper tags if LLM included them
+  narrative = narrative.replace(/^\[记忆闪回\]\s*/, '').replace(/\s*\[\/记忆闪回\]\s*$/, '').trim();
+
+  // Replace pg_xx IDs with readable page titles
+  if (sourcePageIds.length > 0) {
+    const readableSources = sourcePageIds.map(id => {
+      const page = data.pages.find(p => p.id === id);
+      return page ? `${page.day}「${page.title}」` : id;
+    });
+    narrative += `\n来源: ${readableSources.join(' · ')}`;
+  }
+
+  log('Agent narrative:', narrative.length, 'chars, sources:', sourcePageIds);
+  return { narrative, sourcePageIds, error: false };
 }
 
 // ── Keyword Fallback ──
@@ -506,7 +504,6 @@ export async function retrieveMemories(chat, contextSize, abort, type) {
   let narrative = '';
   let recalledChars = [];
   let sourcePageIds = [];
-  let agentSkipped = false;
 
   // Step 1: Embedding pre-filter (if configured)
   let candidatePages = null;
@@ -524,31 +521,52 @@ export async function retrieveMemories(chat, contextSize, abort, type) {
   }
 
   // Step 2: MemGPT Agent (if secondary API configured)
+  let agentFailed = false;
   if (s.useSecondaryApi && s.secondaryApiUrl && s.secondaryApiKey) {
     try {
       const result = await agentRetrieve(data, recentText, candidatePages, s.maxPages);
       narrative = result.narrative;
       sourcePageIds = result.sourcePageIds;
-      agentSkipped = result.skipped;
+      agentFailed = result.error;
     } catch (agentErr) {
       warn('Agent retrieve failed:', agentErr);
-      toastr?.error?.(
-        `记忆召回失败（副API无响应）：${agentErr.message?.substring(0, 80) || '未知错误'}。请检查副API服务状态或切换至可用的API。`,
-        'Memory Manager',
-        { timeOut: 10000 },
-      );
-      // Fall through to keyword fallback
+      agentFailed = true;
     }
   }
 
-  // Step 3: Keyword fallback (only if agent not configured or failed without skipping)
-  if (!agentSkipped && !narrative) {
-    const queryKeywords = extractQueryKeywords(recentMessages);
-    log('Keyword fallback, keywords:', [...queryKeywords]);
-    const kwResult = keywordFallbackRetrieve(data, queryKeywords, s.maxPages);
-    if (kwResult.pages.length > 0) {
-      narrative = formatRecalledPages(kwResult.pages);
-      sourcePageIds = kwResult.pages.map(p => p.id);
+  // Step 3: Fallback when agent failed or returned empty
+  if (!narrative) {
+    if (agentFailed) {
+      // Agent was called but failed — notify user
+      if (candidatePages && candidatePages.length > 0) {
+        toastr?.warning?.('记忆代理调用失败，已降级为Embedding直接注入，请检查API状态哟(∪.∪ )...zzz', 'Memory Manager', { timeOut: 5000 });
+        log('Agent failed, injecting embedding candidates:', candidatePages.length, 'pages');
+        narrative = formatRecalledPages(candidatePages);
+        sourcePageIds = candidatePages.map(p => p.id);
+      } else {
+        toastr?.warning?.('记忆代理调用失败，没有设置embedding端点，已降级为关键词检索，请检查API与embedding状态哟( •̀ .̫ •́ )✧', 'Memory Manager', { timeOut: 5000 });
+        const queryKeywords = extractQueryKeywords(recentMessages);
+        log('Agent failed, keyword fallback, keywords:', [...queryKeywords]);
+        const kwResult = keywordFallbackRetrieve(data, queryKeywords, s.maxPages);
+        if (kwResult.pages.length > 0) {
+          narrative = formatRecalledPages(kwResult.pages);
+          sourcePageIds = kwResult.pages.map(p => p.id);
+        }
+      }
+    } else if (candidatePages && candidatePages.length > 0) {
+      // Agent not configured — use embedding results directly
+      log('No agent configured, using embedding candidates:', candidatePages.length, 'pages');
+      narrative = formatRecalledPages(candidatePages);
+      sourcePageIds = candidatePages.map(p => p.id);
+    } else {
+      // No agent, no embedding — keyword fallback
+      const queryKeywords = extractQueryKeywords(recentMessages);
+      log('Keyword fallback, keywords:', [...queryKeywords]);
+      const kwResult = keywordFallbackRetrieve(data, queryKeywords, s.maxPages);
+      if (kwResult.pages.length > 0) {
+        narrative = formatRecalledPages(kwResult.pages);
+        sourcePageIds = kwResult.pages.map(p => p.id);
+      }
     }
   }
 
