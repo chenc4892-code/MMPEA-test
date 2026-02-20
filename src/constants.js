@@ -77,7 +77,6 @@ export const DEFAULT_SETTINGS = {
     // Known characters
     knownCharacters: '',
     // === v5 additions ===
-    autoSaveSlot: true,
     // Embedding
     useEmbedding: false,
     embeddingModel: 'text-embedding-3-large',

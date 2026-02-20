@@ -5,15 +5,11 @@
 
 import { log, warn } from './utils.js';
 import {
-    getSettings,
     getMemoryData,
     saveMemoryData,
-    getCurrentCharName,
     getSaveIndex,
     updateSaveIndex,
-    getActiveSlotName,
     runMigrationChain,
-    createDefaultData,
 } from './data.js';
 
 import {
@@ -173,15 +169,3 @@ export async function deleteSlot(charName, slotName) {
     log('Deleted slot:', charName, slotName);
 }
 
-export async function autoSaveIfEnabled() {
-    const s = getSettings();
-    if (!s.autoSaveSlot) return;
-
-    const charName = getCurrentCharName();
-    if (!charName) return;
-
-    const activeSlot = getActiveSlotName(charName);
-    if (activeSlot) {
-        await saveToSlot(charName, activeSlot);
-    }
-}

@@ -29,12 +29,12 @@ import {
 import { MODULE_NAME, PROMPT_KEY_INDEX, PROMPT_KEY_PAGES } from './src/constants.js';
 import {
     getSettings, loadSettings, getMemoryData, saveMemoryData,
-    saveSetting, getCurrentCharName, getActiveSlotName, getSaveIndex,
+    saveSetting, getCurrentCharName, getActiveSlotName, listSlots,
     toggleSecondaryApiFields, toggleAutoHideFields, toggleEmbeddingFields,
 } from './src/data.js';
 import { isAuthorized, showAuthScreen, hideAuthScreen, bindAuthUI } from './src/auth.js';
 import { testSecondaryApi } from './src/api.js';
-import { saveToSlot, loadFromSlot } from './src/save.js';
+import { saveToSlot } from './src/save.js';
 import { testEmbeddingApi, rebuildAllVectors, rebuildCategories } from './src/embedding.js';
 import { formatStoryIndex } from './src/formatting.js';
 import {
@@ -126,12 +126,11 @@ function bindSettingsPanel() {
     $('#mm_test_secondary_api').on('click', testSecondaryApi);
 
     // Save management bindings
-    $('#mm_auto_save_slot').on('change', function () { saveSetting('autoSaveSlot', this.checked); });
     $('#mm_save_now').on('click', async () => {
         const charName = getCurrentCharName();
         if (!charName) { toastr.warning('请先选择角色'); return; }
-        const idx = getSaveIndex();
-        const active = idx[charName]?.activeSlot || '主线';
+        const active = getActiveSlotName(charName);
+        if (!active) { toastr.warning('当前未绑定存档，请先新建或加载一个存档', 'Memory Manager'); return; }
         await saveToSlot(charName, active);
         toastr.success(`已保存到存档「${active}」`);
         refreshSlotListUI();
@@ -294,18 +293,16 @@ function onChatChanged() {
         saveMemoryData(); // Persist the reset — prevents stale lock from surviving page reloads on the same chat
     }
 
-    // Cross-chat save loading
+    // Notify if this character has saves but current chat has no memory
     const charName = getCurrentCharName();
-    if (charName && (!data.timeline && data.pages.length === 0)) {
-        const activeSlot = getActiveSlotName(charName);
-        if (activeSlot) {
+    if (charName && !data.timeline && data.pages.length === 0) {
+        const slots = listSlots(charName);
+        if (slots.length > 0) {
+            const names = slots.map(s => s.name).join('、');
             toastr?.info?.(
-                `检测到角色「${charName}」的记忆存档「${activeSlot}」，点击此处加载`,
+                `角色「${charName}」有 ${slots.length} 个记忆存档：${names}，请前往插件面板选择加载`,
                 'Memory Manager',
-                {
-                    timeOut: 10000,
-                    onclick: () => loadFromSlot(charName, activeSlot),
-                },
+                { timeOut: 8000 },
             );
         }
     }

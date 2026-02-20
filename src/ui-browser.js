@@ -67,7 +67,6 @@ export function updateBrowserUI(sections) {
         $('#mm_secondary_api_key').val(s.secondaryApiKey || '');
         $('#mm_secondary_api_model').val(s.secondaryApiModel || '');
         $('#mm_secondary_api_temperature').val(s.secondaryApiTemperature ?? 0.3);
-        $('#mm_auto_save_slot').prop('checked', s.autoSaveSlot);
         $('#mm_use_embedding').prop('checked', s.useEmbedding);
         $('#mm_embedding_fields').toggle(!!s.useEmbedding);
         $('#mm_embedding_model').val(s.embeddingModel || '');

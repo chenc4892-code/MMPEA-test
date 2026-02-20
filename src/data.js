@@ -94,9 +94,6 @@ export function loadSettings() {
     // Known characters
     $('#mm_known_characters').val(s.knownCharacters);
 
-    // Save management
-    $('#mm_auto_save_slot').prop('checked', s.autoSaveSlot);
-
     // Embedding
     $('#mm_use_embedding').prop('checked', s.useEmbedding);
     $('#mm_embedding_model').val(s.embeddingModel);

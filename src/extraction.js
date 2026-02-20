@@ -16,17 +16,15 @@ import { log, warn, parseJsonResponse, generateId } from './utils.js';
 import {
     getMemoryData, saveMemoryData, getSettings,
     getKnownCharacterNames, getCurrentCharName,
-    getSaveIndex, getActiveSlotName,
 } from './data.js';
 import { callLLM } from './api.js';
 import { buildExtractionPrompt, mergeTimelines } from './formatting.js';
 import { setMood } from './mood.js';
 import { isEmbeddingConfigured, embedPage, embedCharacter } from './embedding.js';
-import { saveToSlot, loadFromSlot, autoSaveIfEnabled } from './save.js';
 import { safeCompress } from './compression.js';
 
 import { getContext } from '../../../../extensions.js';
-import { is_send_press, saveSettingsDebounced } from '../../../../../script.js';
+import { is_send_press } from '../../../../../script.js';
 import { hideChatMessageRange } from '../../../../chats.js';
 
 const toastr = window.toastr;
@@ -330,9 +328,6 @@ export async function performExtraction() {
 
     // Run compression cycle after extraction (checks individual toggles internally)
     await safeCompress(false);
-
-    // Auto-save to slot after extraction
-    await autoSaveIfEnabled();
 }
 
 export async function safeExtract(force = false) {
@@ -366,41 +361,7 @@ export async function safeExtract(force = false) {
     }
 
     if (force) {
-        // Force mode: protect save before processing
-        const charName = getCurrentCharName();
-        if (charName) {
-            const activeSlot = getActiveSlotName(charName);
-            if (activeSlot) {
-                // Auto-backup existing save before force extract
-                const backupName = `${activeSlot}-备份`;
-                try {
-                    await saveToSlot(charName, backupName);
-                    // saveToSlot changes activeSlot — restore it
-                    const idx = getSaveIndex();
-                    if (idx[charName]) idx[charName].activeSlot = activeSlot;
-                    saveSettingsDebounced();
-                    log('Auto-backup created:', backupName);
-                    toastr?.info?.(`已自动备份到「${backupName}」`, 'Memory Manager');
-                } catch (e) {
-                    warn('Auto-backup before force extract failed:', e);
-                }
-
-                // Auto-load save if current data is empty (prevents overwriting good save with empty data)
-                if (!data.timeline && data.pages.length === 0) {
-                    try {
-                        await loadFromSlot(charName, activeSlot);
-                        log('Auto-loaded save before force extract:', activeSlot);
-                        toastr?.info?.(`已自动加载存档「${activeSlot}」`, 'Memory Manager');
-                    } catch (e) {
-                        warn('Auto-load before force extract failed:', e);
-                    }
-                }
-            }
-        }
-
-        // Re-get data reference after potential loadFromSlot (which replaces ctx.chatMetadata.memoryManager)
-        const freshData = getMemoryData();
-        await forceExtractUnprocessed(freshData, ctx, s);
+        await forceExtractUnprocessed(data, ctx, s);
     } else {
         // Normal mode: watermark-based incremental extraction
         const pendingCount = ctx.chat.length - 1 - data.processing.lastExtractedMessageId;
@@ -597,7 +558,6 @@ export async function forceExtractUnprocessed(data, ctx, s) {
             }
         }
         await safeCompress(false);
-        await autoSaveIfEnabled();
         await hideProcessedMessages();
         _ui.updateBrowserUI?.();
 
